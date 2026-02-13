@@ -1,42 +1,40 @@
 # 📊 Pipedrive BI Data Pipeline
 
-This repository contains a structured data pipeline project built to extract data from the Pipedrive API and load it into Google BigQuery for Business Intelligence analysis.
-
-The goal of this project is to build a scalable and professional data architecture that supports dashboard development in Looker Studio and advanced BI analysis.
-
-This repository serves as a portfolio project showcasing real-world data engineering practices applied to CRM data.
+![Python](https://img.shields.io/badge/Python-3.11-blue)
+![BigQuery](https://img.shields.io/badge/BigQuery-GCP-orange)
+![Data Engineering](https://img.shields.io/badge/Data-Engineering-green)
+![Looker Studio](https://img.shields.io/badge/Looker%20Studio-Google-blue?logo=googlelookerstudio)
 
 ---
 
-## ✅ Project Overview
+## 📌 Overview
 
-### 1. Pipedrive to BigQuery Pipeline  
-Folder: pipedrive_bi
+This repository contains an end-to-end data pipeline designed to extract CRM data from the **Pipedrive API** and load it into **Google BigQuery**, enabling scalable Business Intelligence analytics and dashboarding in **Looker Studio**.
 
-Description:  
-A modular Python pipeline that extracts data from the Pipedrive REST API and loads it into BigQuery using structured data layers.
+The project demonstrates real-world **data analysis, data engineering, and analytics engineering practices**, including modular ETL design, data modeling, and BI-ready data architecture.
 
-### Key Features:
-
-- API connection with automatic pagination handling  
-- Secure environment variable configuration (.env)  
-- Modular project structure (config, API client, BigQuery loader)  
-- Raw data ingestion layer in BigQuery  
-- Support for TRUNCATE and UPSERT strategies  
-- Designed for scalability and automation  
+This repository is intended as a **portfolio project** showcasing professional data pipeline development applied to CRM data.
 
 ---
 
 ## 🧠 Data Architecture
 
 Pipedrive API
+
 ↓
+
 Python (Extraction & Normalization)
+
 ↓
+
 BigQuery - Raw Layer
+
 ↓
+
 SQL Transformations (Staging / Dim / Fact)
+
 ↓
+
 Looker Studio Dashboards
 
 ---
@@ -83,5 +81,9 @@ I focus on creating clean architectures, efficient data flows, and reliable data
 
 📌 Connect with me:
 
-🔗 [LinkedIn](https://www.linkedin.com/in/andrezaumbelino/)
+<a href="https://www.linkedin.com/in/andrezaumbelino" target="_blank">
+  <img src="https://img.shields.io/badge/LinkedIn-Connect-blue?style=for-the-badge&logo=linkedin&logoColor=white"/>
+</a>
+
+
 
