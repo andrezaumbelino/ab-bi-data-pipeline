@@ -41,7 +41,7 @@ Looker Studio Dashboards
 
 # 📊 Dashboard Previews
 
-Dashboard Gallery: [View Here](./assets)
+📸 [Project Visuals](./assets)
 
 The dashboards were built using **simulated and anonymized data** for portfolio purposes only.
 
