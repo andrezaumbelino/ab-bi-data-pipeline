@@ -81,9 +81,8 @@ I focus on creating clean architectures, efficient data flows, and reliable data
 
 📌 Connect with me:
 
-<a href="https://www.linkedin.com/in/andrezaumbelino" target="_blank">
-  <img src="https://img.shields.io/badge/LinkedIn-Connect-blue?style=for-the-badge&logo=linkedin&logoColor=white"/>
-</a>
-
-
+<p align="left">
+  <a href="https://www.linkedin.com/in/andrezaumbelino" target="_blank">
+    <img src="https://img.shields.io/badge/LinkedIn-%230077B5.svg?&style=for-the-badge&logo=linkedin&logoColor=white"/>
+  </a>
 
