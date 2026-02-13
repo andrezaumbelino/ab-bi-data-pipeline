@@ -1,4 +1,4 @@
-# 📊 Pipedrive BI Data Pipeline
+# 📊 Pipedrive BI Data Pipeline - Atlantic Bridge
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![BigQuery](https://img.shields.io/badge/BigQuery-GCP-orange)
