@@ -1,11 +1,11 @@
 import pandas as pd
 
-NAME = "Deals"
-TABLE = "raw_deals"
+NAME = "Notes"
+TABLE = "raw_notes"
 MODE = "truncate"
 
 API_VERSION = "v1"
-RESOURCE = "deals"
+RESOURCE = "notes"
 
 
 def extract(pd_client):

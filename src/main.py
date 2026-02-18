@@ -2,6 +2,8 @@
 Conctar a API
 Buscar quais extractors existem
 Exportar dados para o GCP
+
+python -m src.main
 """
 
 import importlib
@@ -20,9 +22,6 @@ from src.pipedrive_client import PipedriveClient
 from src.bq_loader import BigQueryLoader
 
 
-# ================================
-# Sanitiza nomes de colunas p/ BigQuery
-# ================================
 def sanitize_bq_columns(cols):
     """
     BigQuery não aceita '.', espaços e alguns caracteres nos nomes.
@@ -47,9 +46,6 @@ def sanitize_bq_columns(cols):
     return cleaned
 
 
-# ================================
-# Descobre automaticamente extractors
-# ================================
 def discover_extractors():
     modules = []
 
@@ -65,9 +61,6 @@ def discover_extractors():
     return modules
 
 
-# ================================
-# Runner principal
-# ================================
 def run():
     pd_client = PipedriveClient(
         PIPEDRIVE_BASE_URL,
@@ -102,10 +95,10 @@ def run():
             print("  ⚠ Nenhum dado retornado.")
             continue
 
-        # 🔥 Sanitiza nomes de colunas para BigQuery
+       
         df.columns = sanitize_bq_columns(df.columns)
 
-        # Coluna técnica de auditoria
+    
         df["ingested_at"] = datetime.now(timezone.utc)
 
         table_id = bq.load_df(df, table, mode=mode)

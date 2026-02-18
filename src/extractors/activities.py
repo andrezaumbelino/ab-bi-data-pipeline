@@ -1,10 +1,14 @@
 import pandas as pd
 
-NAME = "activities"
-ENDPOINT = "activities"
+NAME = "Activities"
 TABLE = "raw_activities"
 MODE = "truncate"
 
-def extract(pd_client, params=None, limit=100) -> pd.DataFrame:
-    data = pd_client.fetch_all(ENDPOINT, params=params, limit=limit)
-    return pd.json_normalize(data) if data else pd.DataFrame()
+API_VERSION = "v1"
+RESOURCE = "activities/collection"
+
+
+def extract(pd_client):
+    endpoint = f"/{API_VERSION}/{RESOURCE}"
+    items = pd_client.fetch_all_cursor(endpoint, limit=500, debug=True)
+    return pd.json_normalize(items) if items else pd.DataFrame()

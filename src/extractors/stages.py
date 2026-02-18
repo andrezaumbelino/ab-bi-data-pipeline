@@ -1,11 +1,11 @@
 import pandas as pd
 
-NAME = "Users"
-TABLE = "raw_users"
+NAME = "Stages"
+TABLE = "raw_stages"
 MODE = "truncate"
 
 API_VERSION = "v1"
-RESOURCE = "users"
+RESOURCE = "stages"
 
 
 def extract(pd_client, params=None, limit=500) -> pd.DataFrame:
