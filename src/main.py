@@ -23,14 +23,6 @@ from src.bq_loader import BigQueryLoader
 
 
 def sanitize_bq_columns(cols):
-    """
-    BigQuery não aceita '.', espaços e alguns caracteres nos nomes.
-    Estratégia:
-      - troca '.' por '_'
-      - troca espaços por '_'
-      - remove caracteres inválidos
-      - garante que começa com letra ou _
-    """
     cleaned = []
     for c in cols:
         c = str(c)
