@@ -1,5 +1,6 @@
-# Criar uma conexão reutilizável com a API do Pipedrive.
-
+# src/pipedrive_client.py
+import time
+import random
 import requests
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +10,71 @@ class PipedriveClient:
         self.base_url = base_url.rstrip("/")
         self.api_token = api_token
         self.timeout = timeout
+
+    def _get_with_retry(self, url: str, params: Dict[str, Any], max_retries: int = 12) -> requests.Response:
+        """
+        GET com retry:
+        - 429: respeita Retry-After se existir (senão espera crescente)
+        - 5xx / timeout / connection: backoff exponencial com jitter
+        """
+        base_backoff = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                r = requests.get(url, params=params, timeout=self.timeout)
+
+                # Rate limit
+                if r.status_code == 429:
+                    retry_after = r.headers.get("Retry-After")
+                    if retry_after and retry_after.isdigit():
+                        sleep_s = int(retry_after)
+                    else:
+                        sleep_s = min(60, base_backoff * (2 ** attempt))
+                        sleep_s = max(sleep_s, 10)
+
+                    sleep_s += random.uniform(0.0, 0.5)
+                    print(f"⏳ 429 Too Many Requests. Esperando {sleep_s:.1f}s e tentando novamente...")
+                    time.sleep(sleep_s)
+                    continue
+
+                # 5xx transitório
+                if 500 <= r.status_code < 600:
+                    sleep_s = min(60, base_backoff * (2 ** attempt)) + random.uniform(0.0, 0.5)
+                    print(f"⏳ {r.status_code} Server error. Esperando {sleep_s:.1f}s e tentando novamente...")
+                    time.sleep(sleep_s)
+                    continue
+
+                r.raise_for_status()
+                return r
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                sleep_s = min(60, base_backoff * (2 ** attempt)) + random.uniform(0.0, 0.5)
+                print(f"⏳ Timeout/Connection error: {e}. Esperando {sleep_s:.1f}s e tentando novamente...")
+                time.sleep(sleep_s)
+
+        # última tentativa “explode” com detalhes
+        r.raise_for_status()  # type: ignore[name-defined]
+        return r
+
+    def fetch_page(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        limit: int = 100,
+        start: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Retorna o payload (JSON) de UMA página (offset pagination).
+        Ideal pra ETL grande com checkpoint.
+        """
+        params = dict(params or {})
+        params["api_token"] = self.api_token
+        params["limit"] = min(limit, 500)
+        params["start"] = start
+
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        r = self._get_with_retry(url, params=params)
+        return r.json()
 
     def fetch_all(self, endpoint: str, params: Optional[Dict[str, Any]] = None, limit: int = 100):
         params = dict(params or {})
@@ -23,8 +89,7 @@ class PipedriveClient:
         while True:
             page_params = {**params, "start": start, "limit": limit}
 
-            r = requests.get(url, params=page_params, timeout=self.timeout)
-            r.raise_for_status()
+            r = self._get_with_retry(url, params=page_params)
             payload = r.json()
 
             items = payload.get("data") or []
@@ -61,8 +126,7 @@ class PipedriveClient:
             if cursor:
                 page_params[cursor_param] = cursor
 
-            r = requests.get(url, params=page_params, timeout=self.timeout)
-            r.raise_for_status()
+            r = self._get_with_retry(url, params=page_params)
             payload = r.json()
 
             items = payload.get("data") or []

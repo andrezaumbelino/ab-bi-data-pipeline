@@ -6,6 +6,7 @@ Exportar dados para o GCP
 python -m src.main
 """
 
+
 import importlib
 import pkgutil
 import re
@@ -47,6 +48,7 @@ def discover_extractors():
 
         mod = importlib.import_module(f"src.extractors.{m.name}")
 
+        # Mantém o comportamento atual: extractor padrão tem extract()
         if hasattr(mod, "extract"):
             modules.append(mod)
 
@@ -81,16 +83,56 @@ def run():
 
         print(f"\n▶ Rodando {name} → {table} (mode={mode})")
 
+        # =========================
+        # 1) Modo streaming (chunks)
+        # =========================
+        if hasattr(ex, "iter_extract_chunks"):
+            total_rows = 0
+            chunk_n = 0
+            first_chunk = True
+            table_id_last = None
+
+            for df in ex.iter_extract_chunks(pd_client=pd_client):
+                if df is None or df.empty:
+                    continue
+
+                df.columns = sanitize_bq_columns(df.columns)
+                df["ingested_at"] = datetime.now(timezone.utc)
+
+                # Se o extractor pediu truncate, só no primeiro chunk; depois append.
+                if first_chunk:
+                    write_mode = "truncate" if mode == "truncate" else "append"
+                    first_chunk = False
+                else:
+                    write_mode = "append"
+
+                table_id_last = bq.load_df(df, table, mode=write_mode)
+
+                chunk_n += 1
+                total_rows += len(df)
+
+                print(
+                    f"  ✅ chunk {chunk_n}: {len(df)} linhas "
+                    f"(total={total_rows}) em {table_id_last} | mode={write_mode}"
+                )
+
+            if chunk_n == 0:
+                print("  ⚠ Nenhum dado retornado.")
+            else:
+                print(f"  ✅ FINAL: {total_rows} linhas carregadas em {table_id_last}")
+
+            continue
+
+        # =========================
+        # 2) Modo normal (DataFrame)
+        # =========================
         df = ex.extract(pd_client=pd_client)
 
         if df is None or df.empty:
             print("  ⚠ Nenhum dado retornado.")
             continue
 
-       
         df.columns = sanitize_bq_columns(df.columns)
-
-    
         df["ingested_at"] = datetime.now(timezone.utc)
 
         table_id = bq.load_df(df, table, mode=mode)

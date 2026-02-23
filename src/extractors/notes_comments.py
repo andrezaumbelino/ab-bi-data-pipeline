@@ -1,228 +1,156 @@
-# extractors/notes_comments.py
-# Extrai comments de notes do Pipedrive (últimos 6 meses) com:
-# - filtro server-side (start_date/end_date)
-# - controle de concorrência (para evitar 429)
-# - retry/backoff para 429/5xx/timeouts
-# - checkpoint (retoma de onde parou)
-# - flush em chunks (não estoura memória)
+# import time
+# import json
+# import random
+# from pathlib import Path
+# from datetime import datetime, timezone
+# from typing import Dict, Any, List
 
-import time
-import json
-import random
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+# import pandas as pd
 
-import pandas as pd
+# NAME = "NoteComments"
+# TABLE = "raw_note_comments"
+# MODE = "truncate"  # ✅ mensal + “trazer tudo” sem duplicar
 
+# API_VERSION = "v1"
 
-NAME = "NoteComments"
-TABLE = "raw_note_comments"
-MODE = "truncate"
+# NOTES_LIMIT = 500
+# COMMENTS_LIMIT = 100
 
-API_VERSION = "v1"
-RESOURCE = "notes"
+# REQUESTS_PER_SECOND = 2.0  # se ainda der 429, coloque 1.0
+# _MIN_INTERVAL = 1.0 / REQUESTS_PER_SECOND
 
-# paginação
-NOTES_PAGE_LIMIT = 500
-COMMENTS_PAGE_LIMIT = 100
-
-# >>> AJUSTE PRINCIPAL PARA 429 <<<
-# 12 threads costuma estourar rate limit fácil em endpoints caros (cost 20).
-MAX_WORKERS = 2
-
-# flush/memória
-FLUSH_EVERY = 2000
-
-# checkpoint
-CHECKPOINT_PATH = Path("checkpoint_note_comments.json")
-
-# período
-LOOKBACK_DAYS = 180  # ~6 meses
-MAX_NOTES = None  # None = todas
+# FLUSH_EVERY_COMMENTS = 2000
+# CHECKPOINT_PATH = Path("checkpoint_full_note_comments.json")
 
 
-def _load_checkpoint() -> Dict[str, Any]:
-    if CHECKPOINT_PATH.exists():
-        try:
-            return json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return {"done_note_ids": []}
-    return {"done_note_ids": []}
+# def _now_iso() -> str:
+#     return datetime.now(timezone.utc).isoformat()
 
 
-def _save_checkpoint(done_note_ids: List[int]) -> None:
-    CHECKPOINT_PATH.write_text(
-        json.dumps({"done_note_ids": done_note_ids}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+# def _load_ckpt() -> Dict[str, Any]:
+#     if CHECKPOINT_PATH.exists():
+#         try:
+#             return json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+#         except Exception:
+#             pass
+#     return {"notes_next_start": 0, "processed_note_ids": [], "updated_at": _now_iso()}
 
 
-def _date_utc(days_ago: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+# def _save_ckpt(state: Dict[str, Any]) -> None:
+#     state["updated_at"] = _now_iso()
+#     CHECKPOINT_PATH.write_text(
+#         json.dumps(state, ensure_ascii=False, indent=2),
+#         encoding="utf-8",
+#     )
 
 
-def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+# class _Throttle:
+#     def __init__(self, min_interval: float):
+#         self.min_interval = min_interval
+#         self._last = 0.0
+
+#     def wait(self):
+#         now = time.time()
+#         dt = now - self._last
+#         if dt < self.min_interval:
+#             time.sleep((self.min_interval - dt) + random.uniform(0.0, 0.05))
+#         self._last = time.time()
 
 
-def _sleep_with_jitter(seconds: float) -> None:
-    # jitter pequeno pra não sincronizar várias threads batendo junto
-    time.sleep(max(0.0, seconds + random.uniform(0.0, 0.35)))
+# def _fetch_all_comments_for_note(pd_client, note_id: int, throttle: _Throttle) -> List[Dict[str, Any]]:
+#     endpoint = f"{API_VERSION}/notes/{note_id}/comments"
+#     throttle.wait()
+#     comments = pd_client.fetch_all(endpoint=endpoint, params={}, limit=COMMENTS_LIMIT) or []
+#     for c in comments:
+#         c["note_id"] = note_id
+#     return comments
 
 
-def _fetch_comments_with_retry(pd_client, note_id: int, max_retries: int = 10) -> List[Dict[str, Any]]:
-    """
-    Busca todos os comments de uma note com retry/backoff.
-    OBS: Como seu PipedriveClient.fetch_all levanta Exception sem expor headers,
-         aqui a gente faz backoff progressivo quando detectar 429.
-    """
-    endpoint = f"{API_VERSION}/notes/{note_id}/comments"
+# def iter_extract_chunks(pd_client):
+#     throttle = _Throttle(_MIN_INTERVAL)
 
-    base_sleep = 2.0  # mais conservador pra 429
-    for attempt in range(max_retries):
-        try:
-            comments = pd_client.fetch_all(
-                endpoint=endpoint,
-                params={},
-                limit=COMMENTS_PAGE_LIMIT,
-            ) or []
+#     ckpt = _load_ckpt()
+#     next_start = int(ckpt.get("notes_next_start", 0))
+#     processed = set(ckpt.get("processed_note_ids", []))
 
-            for c in comments:
-                c["note_id"] = note_id
+#     notes_endpoint = f"{API_VERSION}/notes"
 
-            return comments
+#     comments_buffer: List[Dict[str, Any]] = []
+#     total_notes = 0
+#     total_comments = 0
 
-        except Exception as e:
-            msg = str(e).lower()
+#     while True:
+#         # ✅ pega UMA página só
+#         throttle.wait()
+#         payload = pd_client.fetch_page(
+#             endpoint=notes_endpoint,
+#             params={},  # todas as notes
+#             limit=NOTES_LIMIT,
+#             start=next_start,
+#         )
 
-            is_429 = ("429" in msg) or ("too many requests" in msg)
-            is_retryable = (
-                is_429
-                or ("rate" in msg)
-                or ("timeout" in msg)
-                or ("tempor" in msg)
-                or ("503" in msg)
-                or ("502" in msg)
-                or ("500" in msg)
-                or ("connection" in msg)
-            )
+#         notes_page = payload.get("data") or []
+#         pagination = (payload.get("additional_data") or {}).get("pagination") or {}
+#         more = bool(pagination.get("more_items_in_collection"))
+#         next_start_new = pagination.get("next_start", next_start + NOTES_LIMIT)
 
-            if (not is_retryable) or (attempt == max_retries - 1):
-                print(f"⚠ Falha definitiva note_id={note_id}: {e}")
-                return []
+#         if not notes_page:
+#             break
 
-            # Backoff exponencial (mais agressivo se for 429)
-            sleep_s = base_sleep * (2 ** attempt)
-            sleep_s = min(sleep_s, 60)
+#         note_ids = [n.get("id") for n in notes_page if n.get("id")]
 
-            # Se for 429, força um mínimo maior
-            if is_429:
-                sleep_s = max(sleep_s, 15)
+#         for nid in note_ids:
+#             total_notes += 1
+#             if nid in processed:
+#                 continue
 
-            print(f"⏳ Retry note_id={note_id} (tentativa {attempt+1}/{max_retries}) - aguardando ~{sleep_s:.0f}s por erro: {e}")
-            _sleep_with_jitter(sleep_s)
+#             try:
+#                 comments = _fetch_all_comments_for_note(pd_client, nid, throttle=throttle)
+#             except Exception as e:
+#                 print(f"⚠ Falha note_id={nid}: {e}")
+#                 comments = []
 
-    return []
+#             if comments:
+#                 comments_buffer.extend(comments)
+#                 total_comments += len(comments)
+
+#             processed.add(nid)
+
+#             if len(comments_buffer) >= FLUSH_EVERY_COMMENTS:
+#                 df = pd.DataFrame(comments_buffer)
+#                 comments_buffer = []
+
+#                 ckpt["notes_next_start"] = next_start
+#                 ckpt["processed_note_ids"] = list(processed)
+#                 _save_ckpt(ckpt)
+
+#                 print(f"✅ Flush: notes={total_notes} comments_total={total_comments} chunk_rows={len(df)}")
+#                 yield df
+
+#         # ✅ avança a paginação e salva checkpoint
+#         next_start = next_start_new
+#         ckpt["notes_next_start"] = next_start
+#         ckpt["processed_note_ids"] = list(processed)
+#         _save_ckpt(ckpt)
+
+#         print(f"📄 Página OK. next_start={next_start} | more={more} | notes_total={total_notes} | comments_total={total_comments}")
+
+#         if not more:
+#             break
+
+#     if comments_buffer:
+#         df = pd.DataFrame(comments_buffer)
+#         ckpt["notes_next_start"] = next_start
+#         ckpt["processed_note_ids"] = list(processed)
+#         _save_ckpt(ckpt)
+
+#         print(f"✅ Flush final: notes={total_notes} comments_total={total_comments} rows={len(df)}")
+#         yield df
 
 
-def extract(pd_client) -> pd.DataFrame:
-    """
-    1) Busca notes do período (últimos LOOKBACK_DAYS) via start_date/end_date.
-    2) Aplica checkpoint.
-    3) Busca comments por note em paralelo (concorrência baixa).
-    4) Retorna DataFrame dos comments + note_id.
-    """
-    endpoint_notes = f"{API_VERSION}/{RESOURCE}"
-
-    start_date = _date_utc(LOOKBACK_DAYS)
-    end_date = _today_utc()
-
-    params = {
-        "start": 0,
-        "limit": NOTES_PAGE_LIMIT,
-        "start_date": start_date,
-        "end_date": end_date,
-        "sort": "add_time ASC",
-    }
-
-    notes = pd_client.fetch_all(endpoint=endpoint_notes, params=params, limit=NOTES_PAGE_LIMIT) or []
-
-    if not notes:
-        print(f"🧾 Nenhuma note encontrada entre {start_date} e {end_date}.")
-        return pd.DataFrame([])
-
-    if MAX_NOTES is not None:
-        notes = notes[:MAX_NOTES]
-
-    note_ids = [n.get("id") for n in notes if n.get("id")]
-    total_notes = len(note_ids)
-
-    ckpt = _load_checkpoint()
-    done = set(ckpt.get("done_note_ids", []))
-    pending = [nid for nid in note_ids if nid not in done]
-
-    print(
-        f"🧾 notes ({start_date} → {end_date}): {total_notes} | "
-        f"já feitas: {len(done)} | pendentes: {len(pending)} | workers={MAX_WORKERS}"
-    )
-
-    if not pending:
-        return pd.DataFrame([])
-
-    all_rows: List[Dict[str, Any]] = []
-    chunks: List[pd.DataFrame] = []
-    done_note_ids = list(done)
-
-    processed = 0
-    comments_count = 0
-
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(_fetch_comments_with_retry, pd_client, nid): nid for nid in pending}
-
-        for fut in as_completed(futures):
-            nid = futures[fut]
-            processed += 1
-
-            try:
-                comments = fut.result()
-            except Exception as e:
-                print(f"⚠ Erro inesperado note_id={nid}: {e}")
-                comments = []
-
-            if comments:
-                all_rows.extend(comments)
-                comments_count += len(comments)
-
-            done_note_ids.append(nid)
-
-            # checkpoint periódico
-            if processed % 100 == 0 or processed == len(pending):
-                print(
-                    f"🧾 notes processadas: {processed}/{len(pending)} | "
-                    f"comments acumulados: {comments_count}"
-                )
-                _save_checkpoint(done_note_ids)
-
-            # flush em lote (memória)
-            if len(all_rows) >= FLUSH_EVERY:
-                chunks.append(pd.DataFrame(all_rows))
-                all_rows = []
-
-    # checkpoint final
-    _save_checkpoint(done_note_ids)
-
-    # flush final
-    if all_rows:
-        chunks.append(pd.DataFrame(all_rows))
-
-    if not chunks:
-        return pd.DataFrame([])
-
-    df = pd.concat(chunks, ignore_index=True)
-
-    # dica: normaliza colunas problemáticas (opcional)
-    # df.columns = [c.replace(".", "_") for c in df.columns]
-
-    return df
+# def extract(pd_client):
+#     # compatível com discover_extractors (não recomendado para full load grande)
+#     frames = []
+#     for df in iter_extract_chunks(pd_client):
+#         frames.append(df)
+#     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
